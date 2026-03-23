@@ -4,8 +4,9 @@ from datetime import date, datetime, timedelta
 from io import StringIO
 import gspread
 from google.oauth2.service_account import Credentials
+view_mode = st.radio("View Mode", ["My Availability", "Summary"], horizontal=True)
 
-st.set_page_config(page_title="Band Availability", layout="wide")
+st.set_page_config(page_title="Band Availability", layout="centered")
 
 STATUS_OPTIONS = ["Available", "Maybe", "Unavailable"]
 STATUS_SCORE = {"Available": 2, "Maybe": 1, "Unavailable": 0}
@@ -94,6 +95,8 @@ def upsert_availability(ws_av, df_av, d_iso, member, status, note):
         ws_av.update(f"C{sheet_row}:E{sheet_row}", [[status, note, now]])
     else:
         ws_av.append_row([d_iso, member, status, note, now])
+if row["unavailable_count"] == 0:
+    st.success("🔥 Full band available")
 
 def to_ics_events(df_best: pd.DataFrame, title_prefix="Gig (Candidate)"):
     lines = [
@@ -169,7 +172,9 @@ if not dates:
 
 # Member selection (bandmates do this on mobile)
 st.subheader("1) Pick your name and set availability")
-member = st.text_input("Your name", placeholder="e.g., Aoife / Dave / The Drummer")
+ws_members = sh.worksheet("members")
+df_members = ws_to_df(ws_members)
+member = st.selectbox("Your name", df_members["member"].tolist())
 
 if not member.strip():
     st.info("Enter your name to start.")
@@ -250,9 +255,21 @@ else:
 members = sorted(df_av2["member"].unique().tolist()) if not df_av2.empty else [member]
 
 rows = []
+changes = []
+
 for d in dates:
     d_iso = d.isoformat()
-    day = WEEKDAY[d.weekday()]
+    status = st.selectbox(
+        f"{d.strftime('%d %b')} ({WEEKDAY[d.weekday()]})",
+        STATUS_OPTIONS,
+        key=f"{member}_{d_iso}"
+    )
+    changes.append((d_iso, status))
+
+if st.button("Save All Changes"):
+    for d_iso, status in changes:
+        upsert_availability(ws_av, df_av, d_iso, member, status, "")
+    st.success("Saved!")
 
     statuses = []
     notes = []
@@ -278,6 +295,8 @@ for d in dates:
         "unavailable_count": sum(1 for s in statuses if s == "Unavailable"),
         "notes": " | ".join(notes),
     })
+    
+
 
 df_best = pd.DataFrame(rows).sort_values(
     by=["score", "available_count", "maybe_count"],
@@ -287,8 +306,26 @@ df_best = pd.DataFrame(rows).sort_values(
 top_n = st.slider("Show top N dates", 1, min(30, len(df_best)), min(10, len(df_best)))
 df_best_n = df_best.head(top_n)
 
-st.dataframe(df_best_n, use_container_width=True, hide_index=True)
+st.write(df_best_n, use_container_width=True, hide_index=True)
 
+view_mode = st.radio(
+    "View Mode",
+    ["Enter Availability", "Summary"],
+    horizontal=True
+)
+if view_mode == "Enter Availability":
+    # availability UI here
+if view_mode == "Summary":
+    st.subheader("Best Dates Overview")
+
+    for _, row in df_best.head(10).iterrows():
+        if row["unavailable_count"] == 0:
+            st.success(f"{row['date']} — Full Band Available 🎉")
+        else:
+            st.warning(
+                f"{row['date']} — "
+                f"{row['unavailable_count']} unavailable"
+            )
 st.caption("Scoring: Available=2, Maybe=1, Unavailable=0. Ties break by more Availables, then Maybes.")
 
 st.divider()
