@@ -314,7 +314,7 @@ view_mode = st.radio(
     horizontal=True
 )
 if view_mode == "Enter Availability":
-    # availability UI here
+    st.write("Enter your availability here")
 if view_mode == "Summary":
     st.subheader("Best Dates Overview")
 
